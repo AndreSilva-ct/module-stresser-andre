@@ -1,0 +1,89 @@
+apiVersion: k6.io/v1alpha1
+kind: TestRun
+metadata:
+  name: quickpizza-sine-test
+  namespace: stress
+spec:
+  parallelism: 1
+
+  arguments: "--console-output=stdout --verbose"
+
+  script:
+    configMap:
+      name: k6-sine-script
+      file: script.js
+
+  # -----------------------
+  # RUNNER (UNIFICADO)
+  # -----------------------
+  runner:
+    image: grafana/k6:latest
+    env:
+      - name: BASE_URL
+        value: "http://quickpizza-public-api.stress.svc.cluster.local:3333"
+      #- name: TEST_NUMBER
+        #value: "5"  #corrigir?  
+      - name: MAX_VUSERS
+        value: "20"
+      - name: DURATION
+        value: "120"
+    tolerations:
+      - key: "node-role.kubernetes.io/control-plane"
+        operator: "Exists"
+        effect: "NoSchedule"
+    affinity:
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+          - matchExpressions:
+            - key: k6runner
+              operator: In
+              values: ["true"]
+
+  # -----------------------
+  # INITIALIZER (NODE-AFFINITY)
+  # -----------------------
+  initializer:
+    env:
+      - name: BASE_URL
+        value: "http://quickpizza-public-api.stress.svc.cluster.local:3333"
+      - name: MAX_VUSERS
+        value: "20"
+      - name: DURATION
+        value: "120"
+    tolerations:
+      - key: "node-role.kubernetes.io/control-plane"
+        operator: "Exists"
+        effect: "NoSchedule"
+    affinity:
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+          - matchExpressions:
+            - key: k6runner
+              operator: In
+              values: ["true"]
+
+  # -----------------------
+  # STARTER (NODE-AFFINITY)
+  # -----------------------
+  starter:
+    env:
+      - name: BASE_URL
+        value: "http://quickpizza-public-api.stress.svc.cluster.local:3333"
+      - name: MAX_VUSERS
+        value: "20"
+      - name: DURATION
+        value: "120"
+    tolerations:
+      - key: "node-role.kubernetes.io/control-plane"
+        operator: "Exists"
+        effect: "NoSchedule"
+    affinity:
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+          - matchExpressions:
+            - key: k6runner
+              operator: In
+              values: ["true"]

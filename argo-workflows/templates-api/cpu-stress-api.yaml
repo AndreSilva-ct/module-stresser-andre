@@ -1,0 +1,76 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: cpu-stress-api
+  namespace: stress
+spec:
+  arguments:
+    parameters:
+      - name: target-node
+      - name: load
+        value: "50"
+      - name: timeout
+        value: "2m"
+      - name: workers
+        value: "2"
+      - name: cpuset
+        value: "0-1"
+      - name: cpu_req
+        value: "1"
+      - name: cpu_lim
+        value: "2"
+      - name: mem_req
+        value: "1Gi"
+      - name: mem_lim
+        value: "1Gi"
+      - name: callback-url
+        value: ""
+  entrypoint: run
+  onExit: notify
+  serviceAccountName: stress-sa
+  templates:
+    - name: run
+      steps:
+        - - name: stress
+            templateRef:
+              name: cpu-stress
+              template: cpu-stress-container
+            arguments:
+              parameters:
+                - { name: image,   value: "ghcr.io/vlanx/cpu-stress:latest" }
+                - { name: workers, value: "{{workflow.parameters.workers}}" }
+                - { name: load,    value: "{{workflow.parameters.load}}" }
+                - { name: timeout, value: "{{workflow.parameters.timeout}}" }
+                - { name: cpuset,  value: "{{workflow.parameters.cpuset}}" }
+                - { name: display, value: "cpu-{{workflow.parameters.workers}}w-{{workflow.parameters.load}}pct" }
+                - { name: cpu_req, value: "{{workflow.parameters.cpu_req}}" }
+                - { name: cpu_lim, value: "{{workflow.parameters.cpu_lim}}" }
+                - { name: mem_req, value: "{{workflow.parameters.mem_req}}" }
+                - { name: mem_lim, value: "{{workflow.parameters.mem_lim}}" }
+
+    - name: notify
+      container:
+        image: curlimages/curl:latest
+        command: [sh, -c]
+        args:
+          - |
+            if [ -z "{{workflow.parameters.callback-url}}" ]; then
+              echo "No callback URL, skipping"
+              exit 0
+            fi
+            curl -sf -X POST "{{workflow.parameters.callback-url}}" \
+              -H "Content-Type: application/json" \
+              -d "{
+                \"workflow\": \"{{workflow.name}}\",
+                \"status\": \"{{workflow.status}}\",
+                \"test_type\": \"cpu\",
+                \"parameters\": {
+                  \"target\": \"{{workflow.parameters.target-node}}\",
+                  \"load\": \"{{workflow.parameters.load}}\",
+                  \"timeout\": \"{{workflow.parameters.timeout}}\",
+                  \"workers\": \"{{workflow.parameters.workers}}\",
+                  \"cpu_lim\": \"{{workflow.parameters.cpu_lim}}\"
+                },
+                \"started\": \"{{workflow.creationTimestamp}}\",
+                \"duration\": \"{{workflow.duration}}\"
+              }" || echo "Callback failed (non-fatal)"

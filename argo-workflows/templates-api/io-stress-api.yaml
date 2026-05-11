@@ -1,0 +1,81 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: io-stress-api
+  namespace: stress
+spec:
+  arguments:
+    parameters:
+      - name: target-node
+      - name: mode
+        value: "seq-read"
+      - name: runtime_sec
+        value: "30"
+      - name: target_mbps
+        value: "100"
+      - name: target_iops
+        value: ""
+      - name: block_size
+        value: "1M"
+      - name: iodepth
+        value: "1"
+      - name: cpu_req
+        value: "1"
+      - name: cpu_lim
+        value: "1"
+      - name: mem_req
+        value: "512Mi"
+      - name: mem_lim
+        value: "512Mi"
+      - name: callback-url
+        value: ""
+  entrypoint: run
+  onExit: notify
+  serviceAccountName: stress-sa
+  templates:
+    - name: run
+      steps:
+        - - name: stress
+            templateRef:
+              name: io-stress
+              template: io-stress-container
+            arguments:
+              parameters:
+                - { name: image,        value: "ghcr.io/vlanx/io-stress:latest" }
+                - { name: mode,         value: "{{workflow.parameters.mode}}" }
+                - { name: runtime_sec,  value: "{{workflow.parameters.runtime_sec}}" }
+                - { name: block_size,   value: "{{workflow.parameters.block_size}}" }
+                - { name: iodepth,      value: "{{workflow.parameters.iodepth}}" }
+                - { name: target_mbps,  value: "{{workflow.parameters.target_mbps}}" }
+                - { name: target_iops,  value: "{{workflow.parameters.target_iops}}" }
+                - { name: host_path,    value: "/var/lib/module-stresser" }
+                - { name: display,      value: "io-{{workflow.parameters.mode}}-{{workflow.parameters.runtime_sec}}s" }
+                - { name: cpu_req,      value: "{{workflow.parameters.cpu_req}}" }
+                - { name: cpu_lim,      value: "{{workflow.parameters.cpu_lim}}" }
+                - { name: mem_req,      value: "{{workflow.parameters.mem_req}}" }
+                - { name: mem_lim,      value: "{{workflow.parameters.mem_lim}}" }
+
+    - name: notify
+      container:
+        image: curlimages/curl:latest
+        command: [sh, -c]
+        args:
+          - |
+            if [ -z "{{workflow.parameters.callback-url}}" ]; then
+              echo "No callback URL, skipping"
+              exit 0
+            fi
+            curl -sf -X POST "{{workflow.parameters.callback-url}}" \
+              -H "Content-Type: application/json" \
+              -d "{
+                \"workflow\": \"{{workflow.name}}\",
+                \"status\": \"{{workflow.status}}\",
+                \"test_type\": \"io\",
+                \"parameters\": {
+                  \"target\": \"{{workflow.parameters.target-node}}\",
+                  \"mode\": \"{{workflow.parameters.mode}}\",
+                  \"runtime_sec\": \"{{workflow.parameters.runtime_sec}}\"
+                },
+                \"started\": \"{{workflow.creationTimestamp}}\",
+                \"duration\": \"{{workflow.duration}}\"
+              }" || echo "Callback failed (non-fatal)"

@@ -1,0 +1,136 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: memory-stress-api
+  namespace: stress
+spec:
+  arguments:
+    parameters:
+      - name: target-node
+      - name: size
+        value: "0.25"
+      - name: timeout
+        value: "1m"
+      - name: workers
+        value: "1"
+      - name: read_mbps
+        value: "-1"
+      - name: write_mbps
+        value: "-1"
+      - name: cpuset
+        value: "0"
+      - name: cpu_req
+        value: "1"
+      - name: cpu_lim
+        value: "1"
+      - name: mem_req
+        value: "1Gi"
+      - name: mem_lim
+        value: "7Gi"
+      - name: callback-url
+        value: ""
+  entrypoint: run
+  onExit: notify
+  serviceAccountName: stress-sa
+  templates:
+    - name: run
+      steps:
+        - - name: stress
+            templateRef:
+              name: memory-stress
+              template: memory-stress-container
+            arguments:
+              parameters:
+                - { name: image,          value: "ghcr.io/vlanx/memory-stress:latest" }
+                - { name: workers,        value: "{{workflow.parameters.workers}}" }
+                - { name: read_mbps,      value: "{{workflow.parameters.read_mbps}}" }
+                - { name: write_mbps,     value: "{{workflow.parameters.write_mbps}}" }
+                - { name: timeout,        value: "{{workflow.parameters.timeout}}" }
+                - { name: size,           value: "{{workflow.parameters.size}}" }
+                - { name: memrate_flush,  value: "true" }
+                - { name: memrate_method, value: "all" }
+                - { name: cpuset,         value: "{{workflow.parameters.cpuset}}" }
+                - { name: display,        value: "mem-{{workflow.parameters.size}}G-{{workflow.parameters.timeout}}" }
+                - { name: cpu_req,        value: "{{workflow.parameters.cpu_req}}" }
+                - { name: cpu_lim,        value: "{{workflow.parameters.cpu_lim}}" }
+                - { name: mem_req,        value: "{{workflow.parameters.mem_req}}" }
+                - { name: mem_lim,        value: "{{workflow.parameters.mem_lim}}" }
+
+    - name: notify
+      container:
+        image: curlimages/curl:latest
+        command: [sh, -c]
+        args:
+          - |
+            WORKFLOW_NAME="{{workflow.name}}"
+            WORKFLOW_STATUS="{{workflow.status}}"
+            CALLBACK_URL="{{workflow.parameters.callback-url}}"
+            TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+            CA=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+            K8S=https://kubernetes.default.svc
+
+            ERROR_TYPE="unknown"
+            ERROR_REASON=""
+            ERROR_MESSAGE=""
+
+            if [ "$WORKFLOW_STATUS" != "Succeeded" ]; then
+              PODS=$(curl -sf --cacert $CA \
+                -H "Authorization: Bearer $TOKEN" \
+                "$K8S/api/v1/namespaces/stress/pods?labelSelector=workflows.argoproj.io%2Fworkflow%3D$WORKFLOW_NAME" \
+                2>/dev/null || echo "{}")
+
+              if echo "$PODS" | grep -q '"reason":"OOMKilled"'; then
+                ERROR_TYPE="resource_exhaustion"
+                ERROR_REASON="OOMKilled"
+                ERROR_MESSAGE="Container was killed - memory limit exceeded. Lower size or mem_lim."
+              elif echo "$PODS" | grep -qE '"reason":"(ErrImagePull|ImagePullBackOff)"'; then
+                ERROR_TYPE="config_error"
+                ERROR_REASON="ImagePullBackOff"
+                ERROR_MESSAGE="Failed to pull container image. Check image name and registry access."
+              elif echo "$PODS" | grep -q '"reason":"CreateContainerConfigError"'; then
+                ERROR_TYPE="config_error"
+                ERROR_REASON="CreateContainerConfigError"
+                ERROR_MESSAGE="Container config error. Check volumes, secrets or configmaps."
+              elif echo "$PODS" | grep -q '"exitCode":'; then
+                EXIT_CODE=$(echo "$PODS" | grep -o '"exitCode":[0-9]*' | head -1 | cut -d: -f2)
+                TERM_MSG=$(echo "$PODS" | grep -o '"message":"[^"]*"' | head -1 | cut -d'"' -f4)
+                if [ "$EXIT_CODE" = "1" ]; then
+                  ERROR_TYPE="bad_params"
+                  ERROR_REASON="ExitCode1"
+                  ERROR_MESSAGE="${TERM_MSG:-Stress script exited with error - check parameters.}"
+                else
+                  ERROR_TYPE="stress_error"
+                  ERROR_REASON="ExitCode${EXIT_CODE}"
+                  ERROR_MESSAGE="${TERM_MSG:-Stress container exited unexpectedly.}"
+                fi
+              elif [ "$PODS" = "{}" ] || ! echo "$PODS" | grep -q '"items"'; then
+                ERROR_TYPE="workflow_error"
+                ERROR_REASON="NoPodFound"
+                ERROR_MESSAGE="Workflow failed before any pod was scheduled. Check template params or cluster state."
+              fi
+            fi
+
+            if [ -z "$CALLBACK_URL" ]; then echo "No callback URL, skipping"; exit 0; fi
+
+            if [ "$WORKFLOW_STATUS" = "Succeeded" ]; then
+              ERROR_BLOCK="null"
+            else
+              ERROR_BLOCK="{\"type\":\"$ERROR_TYPE\",\"reason\":\"$ERROR_REASON\",\"message\":\"$ERROR_MESSAGE\"}"
+            fi
+
+            curl -sf -X POST "$CALLBACK_URL" \
+              -H "Content-Type: application/json" \
+              -d "{
+                \"workflow\": \"$WORKFLOW_NAME\",
+                \"status\": \"$WORKFLOW_STATUS\",
+                \"test_type\": \"memory\",
+                \"error\": $ERROR_BLOCK,
+                \"parameters\": {
+                  \"target\": \"{{workflow.parameters.target-node}}\",
+                  \"size_gb\": \"{{workflow.parameters.size}}\",
+                  \"timeout\": \"{{workflow.parameters.timeout}}\",
+                  \"workers\": \"{{workflow.parameters.workers}}\"
+                },
+                \"started\": \"{{workflow.creationTimestamp}}\",
+                \"duration\": \"{{workflow.duration}}\"
+              }" || echo "Callback failed (non-fatal)"

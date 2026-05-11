@@ -1,0 +1,168 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: resource-validator
+  namespace: stress
+spec:
+  templates:
+
+  # ────────────────────────────────────────────────
+  # Memory check
+  #   workers  : number of stress-ng workers
+  #   mem_size : GB per worker  (e.g. 0.25)
+  #   node     : worker node name (default: demo)
+  # ────────────────────────────────────────────────
+  - name: check-memory
+    inputs:
+      parameters:
+      - name: workers
+      - name: mem_size
+      - name: node
+        default: demo
+    script:
+      image: python:3.11-alpine
+      serviceAccountName: stress-sa
+      command: [python]
+      source: |
+        import urllib.request, json, ssl, sys
+
+        TOKEN = open('/var/run/secrets/kubernetes.io/serviceaccount/token').read().strip()
+        CA    = '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt'
+        API   = 'https://kubernetes.default.svc'
+        ctx   = ssl.create_default_context(cafile=CA)
+
+        def k8s(path):
+            req = urllib.request.Request(
+                f"{API}{path}",
+                headers={'Authorization': f'Bearer {TOKEN}'}
+            )
+            with urllib.request.urlopen(req, context=ctx) as r:
+                return json.loads(r.read())
+
+        def to_gb(s):
+            s = str(s)
+            if s.endswith('Ki'): return int(s[:-2]) / 1024 / 1024
+            if s.endswith('Mi'): return int(s[:-2]) / 1024
+            if s.endswith('Gi'): return float(s[:-2])
+            if s.endswith('G'):  return float(s[:-1])
+            return int(s) / 1024**3
+
+        node_name = "{{inputs.parameters.node}}"
+        workers   = int("{{inputs.parameters.workers}}")
+        mem_size  = float("{{inputs.parameters.mem_size}}")
+
+        # --- node allocatable -------------------------------------------------
+        node     = k8s(f'/api/v1/nodes/{node_name}')
+        alloc_gb = to_gb(node['status']['allocatable']['memory'])
+
+        # --- currently requested on this node (stress ns) --------------------
+        pods    = k8s('/api/v1/namespaces/stress/pods')
+        used_gb = 0.0
+        for pod in pods['items']:
+            phase    = pod['status'].get('phase', '')
+            pod_node = pod['spec'].get('nodeName', '')
+            if phase not in ('Running', 'Pending') or pod_node != node_name:
+                continue
+            for c in pod['spec']['containers']:
+                mem = c.get('resources', {}).get('requests', {}).get('memory', '0')
+                used_gb += to_gb(mem)
+
+        # --- decision ---------------------------------------------------------
+        BUFFER_GB   = 0.5          # keep 500 MB for OS / k3s agent
+        available   = alloc_gb - used_gb - BUFFER_GB
+        needed      = workers * mem_size
+
+        print("=" * 50)
+        print(f"  Node        : {node_name}")
+        print(f"  Allocatable : {alloc_gb:.2f} GB")
+        print(f"  In use      : {used_gb:.2f} GB")
+        print(f"  Buffer      : {BUFFER_GB:.2f} GB")
+        print(f"  Available   : {available:.2f} GB")
+        print(f"  Requested   : {needed:.2f} GB  ({workers} workers × {mem_size} GB)")
+        print("=" * 50)
+
+        if needed > available:
+            print(f"\n[FAIL] Need {needed:.2f} GB but only {available:.2f} GB free.")
+            print(f"       Try reducing workers or mem_size.")
+            sys.exit(1)
+
+        print(f"\n[OK] Sufficient memory — continuing.")
+
+  # ────────────────────────────────────────────────
+  # CPU check
+  #   workers : number of stress-ng workers
+  #   cpu_req : millicores per worker (e.g. 500 = 0.5 core)
+  #   node    : worker node name (default: demo)
+  # ────────────────────────────────────────────────
+  - name: check-cpu
+    inputs:
+      parameters:
+      - name: workers
+      - name: cpu_req
+      - name: node
+        default: demo
+    script:
+      image: python:3.11-alpine
+      serviceAccountName: stress-sa
+      command: [python]
+      source: |
+        import urllib.request, json, ssl, sys
+
+        TOKEN = open('/var/run/secrets/kubernetes.io/serviceaccount/token').read().strip()
+        CA    = '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt'
+        API   = 'https://kubernetes.default.svc'
+        ctx   = ssl.create_default_context(cafile=CA)
+
+        def k8s(path):
+            req = urllib.request.Request(
+                f"{API}{path}",
+                headers={'Authorization': f'Bearer {TOKEN}'}
+            )
+            with urllib.request.urlopen(req, context=ctx) as r:
+                return json.loads(r.read())
+
+        def to_m(s):          # any cpu string → millicores int
+            s = str(s)
+            if s.endswith('m'): return int(s[:-1])
+            return int(float(s) * 1000)
+
+        node_name = "{{inputs.parameters.node}}"
+        workers   = int("{{inputs.parameters.workers}}")
+        cpu_req_m = int("{{inputs.parameters.cpu_req}}")
+
+        # --- node allocatable -------------------------------------------------
+        node    = k8s(f'/api/v1/nodes/{node_name}')
+        alloc_m = to_m(node['status']['allocatable']['cpu'])
+
+        # --- currently requested on this node (stress ns) --------------------
+        pods   = k8s('/api/v1/namespaces/stress/pods')
+        used_m = 0
+        for pod in pods['items']:
+            phase    = pod['status'].get('phase', '')
+            pod_node = pod['spec'].get('nodeName', '')
+            if phase not in ('Running', 'Pending') or pod_node != node_name:
+                continue
+            for c in pod['spec']['containers']:
+                cpu = c.get('resources', {}).get('requests', {}).get('cpu', '0')
+                used_m += to_m(cpu)
+
+        # --- decision ---------------------------------------------------------
+        BUFFER_M  = 200           # keep 200m for k3s agent / system
+        available = alloc_m - used_m - BUFFER_M
+        needed    = workers * cpu_req_m
+
+        print("=" * 50)
+        print(f"  Node        : {node_name}")
+        print(f"  Allocatable : {alloc_m}m")
+        print(f"  In use      : {used_m}m")
+        print(f"  Buffer      : {BUFFER_M}m")
+        print(f"  Available   : {available}m")
+        print(f"  Requested   : {needed}m  ({workers} workers × {cpu_req_m}m)")
+        print("=" * 50)
+
+        if needed > available:
+            print(f"\n[FAIL] Need {needed}m but only {available}m free.")
+            print(f"       Try reducing workers or cpu_req.")
+            sys.exit(1)
+
+        print(f"\n[OK] Sufficient CPU — continuing.")

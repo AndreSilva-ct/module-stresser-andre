@@ -1,0 +1,146 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  name: memory-worker1
+  namespace: stress
+spec:
+  serviceAccountName: stress-sa # For proper permissions
+  ttlStrategy:
+    secondsAfterCompletion: 300 # Delete the job file after 300s
+    secondsAfterSuccess: 300     
+    secondsAfterFailure: 3600   # 1h
+  entrypoint: suite
+  arguments:
+    parameters:
+    - name: target-node 
+      value: ultrap3 # Specify the hostname in which the test will run
+  
+  # Reusable cooldown gate lives here, not in the module
+  templates:
+  - name: cooldown
+    suspend:
+      duration: 5m
+
+  - name: suite
+    steps:
+    - - name: memory-12G-10m
+        templateRef:
+          name: memory-stress      # WorkflowTemplate name (same namespace)
+          template: memory-stress-container         # inner template name
+        arguments:
+          parameters:
+          - { name: image,   value: ghcr.io/vlanx/memory-stress:latest }
+          - { name: workers, value: "24" }
+          - { name: read_mbps,    value: "-1" } # Value -1 disables cap on read speed. Value 0 disables reads
+          - { name: write_mbps, value: "-1" } # Value -1 disables cap on read speed. Value 0 disables reads
+          - { name: timeout,  value: "10m" }
+          - { name: size,  value: "0.5" } # Size in Gb for the memory test
+          - { name: memrate_flush,  value: true } 
+          - { name: memrate_method,  value: "all" } 
+          - { name: cpuset, value: "0-23" }
+          - { name: display, value: "memory-12G-10m" }
+          ### CPU Requests/Limits for when we want more workers/cores
+          #- { name: cpu_req, value: "24" }
+          #- { name: cpu_lim, value: "24" }
+            #- { name: mem_req, value: "1Gi" }
+          - { name: mem_lim, value: "64Gi" }
+
+    - - name: cooldown-1
+        template: cooldown
+
+    - - name: memory-24G-10m
+        templateRef:
+          name: memory-stress      # WorkflowTemplate name (same namespace)
+          template: memory-stress-container         # inner template name
+        arguments:
+          parameters:
+          - { name: image,   value: ghcr.io/vlanx/memory-stress:latest }
+          - { name: workers, value: "24" }
+          - { name: read_mbps,    value: "-1" } # Value -1 disables cap on read speed. Value 0 disables reads
+          - { name: write_mbps, value: "-1" } # Value -1 disables cap on read speed. Value 0 disables reads
+          - { name: timeout,  value: "10m" }
+          - { name: size,  value: "1" } # Size in Gb for the memory test
+          - { name: memrate_flush,  value: true } 
+          - { name: memrate_method,  value: "all" } 
+          - { name: cpuset, value: "0-23" }
+          - { name: display, value: "memory-24G-10m" }
+          ### CPU Requests/Limits for when we want more workers/cores
+          #- { name: cpu_req, value: "24" }
+          #- { name: cpu_lim, value: "24" }
+            #- { name: mem_req, value: "1Gi" }
+          - { name: mem_lim, value: "64Gi" }
+
+    - - name: cooldown-2
+        template: cooldown
+
+    - - name: memory-36G-10m
+        templateRef:
+          name: memory-stress      # WorkflowTemplate name (same namespace)
+          template: memory-stress-container         # inner template name
+        arguments:
+          parameters:
+          - { name: image,   value: ghcr.io/vlanx/memory-stress:latest }
+          - { name: workers, value: "24" }
+          - { name: read_mbps,    value: "-1" } # Value -1 disables cap on read speed. Value 0 disables reads
+          - { name: write_mbps, value: "-1" } # Value -1 disables cap on read speed. Value 0 disables reads
+          - { name: timeout,  value: "10m" }
+          - { name: size,  value: "1.5" } # Size in Gb for the memory test
+          - { name: memrate_flush,  value: true } 
+          - { name: memrate_method,  value: "all" } 
+          - { name: cpuset, value: "0-23" }
+          - { name: display, value: "memory-36G-10m" }
+          ### CPU Requests/Limits for when we want more workers/cores
+          #- { name: cpu_req, value: "24" }
+          #- { name: cpu_lim, value: "24" }
+            #- { name: mem_req, value: "1Gi" }
+          - { name: mem_lim, value: "64Gi" }
+
+    - - name: cooldown-3
+        template: cooldown
+
+    - - name: memory-48G-10m
+        templateRef:
+          name: memory-stress      # WorkflowTemplate name (same namespace)
+          template: memory-stress-container         # inner template name
+        arguments:
+          parameters:
+          - { name: image,   value: ghcr.io/vlanx/memory-stress:latest }
+          - { name: workers, value: "24" }
+          - { name: read_mbps,    value: "-1" } # Value -1 disables cap on read speed. Value 0 disables reads
+          - { name: write_mbps, value: "-1" } # Value -1 disables cap on read speed. Value 0 disables reads
+          - { name: timeout,  value: "10m" }
+          - { name: size,  value: "2" } # Size in Gb for the memory test
+          - { name: memrate_flush,  value: true } 
+          - { name: memrate_method,  value: "all" } 
+          - { name: cpuset, value: "0-23" }
+          - { name: display, value: "memory-48G-10m" }
+          ### CPU Requests/Limits for when we want more workers/cores
+          #- { name: cpu_req, value: "24" }
+          #- { name: cpu_lim, value: "24" }
+            #- { name: mem_req, value: "1Gi" }
+          - { name: mem_lim, value: "64Gi" }
+
+    - - name: cooldown-4
+        template: cooldown
+
+    - - name: memory-58G-10m
+        templateRef:
+          name: memory-stress      # WorkflowTemplate name (same namespace)
+          template: memory-stress-container         # inner template name
+        arguments:
+          parameters:
+          - { name: image,   value: ghcr.io/vlanx/memory-stress:latest }
+          - { name: workers, value: "24" }
+          - { name: read_mbps,    value: "-1" } # Value -1 disables cap on read speed. Value 0 disables reads
+          - { name: write_mbps, value: "-1" } # Value -1 disables cap on read speed. Value 0 disables reads
+          - { name: timeout,  value: "10m" }
+          - { name: size,  value: "2.4" } # Size in Gb for the memory test
+          - { name: memrate_flush,  value: true } 
+          - { name: memrate_method,  value: "all" } 
+          - { name: cpuset, value: "0-23" }
+          - { name: display, value: "memory-58G-10m" }
+          ### CPU Requests/Limits for when we want more workers/cores
+          #- { name: cpu_req, value: "24" }
+          #- { name: cpu_lim, value: "24" }
+            #- { name: mem_req, value: "1Gi" }
+          - { name: mem_lim, value: "64Gi" }

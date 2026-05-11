@@ -1,0 +1,78 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: network-stress-api
+  namespace: stress
+spec:
+  arguments:
+    parameters:
+      - name: target-node
+      - name: server
+      - name: bandwidth
+        value: "100"
+      - name: proto
+        value: "tcp"
+      - name: direction
+        value: "upload"
+      - name: time
+        value: "20"
+      - name: cpu_req
+        value: "1"
+      - name: cpu_lim
+        value: "1"
+      - name: mem_req
+        value: "256Mi"
+      - name: mem_lim
+        value: "256Mi"
+      - name: callback-url
+        value: ""
+  entrypoint: run
+  onExit: notify
+  serviceAccountName: stress-sa
+  templates:
+    - name: run
+      steps:
+        - - name: stress
+            templateRef:
+              name: network-stress
+              template: network-stress-container
+            arguments:
+              parameters:
+                - { name: image,     value: "ghcr.io/vlanx/network-stress:latest" }
+                - { name: server,    value: "{{workflow.parameters.server}}" }
+                - { name: bandwidth, value: "{{workflow.parameters.bandwidth}}" }
+                - { name: proto,     value: "{{workflow.parameters.proto}}" }
+                - { name: direction, value: "{{workflow.parameters.direction}}" }
+                - { name: time,      value: "{{workflow.parameters.time}}" }
+                - { name: display,   value: "net-{{workflow.parameters.proto}}-{{workflow.parameters.direction}}-{{workflow.parameters.bandwidth}}m" }
+                - { name: cpu_req,   value: "{{workflow.parameters.cpu_req}}" }
+                - { name: cpu_lim,   value: "{{workflow.parameters.cpu_lim}}" }
+                - { name: mem_req,   value: "{{workflow.parameters.mem_req}}" }
+                - { name: mem_lim,   value: "{{workflow.parameters.mem_lim}}" }
+
+    - name: notify
+      container:
+        image: curlimages/curl:latest
+        command: [sh, -c]
+        args:
+          - |
+            if [ -z "{{workflow.parameters.callback-url}}" ]; then
+              echo "No callback URL, skipping"
+              exit 0
+            fi
+            curl -sf -X POST "{{workflow.parameters.callback-url}}" \
+              -H "Content-Type: application/json" \
+              -d "{
+                \"workflow\": \"{{workflow.name}}\",
+                \"status\": \"{{workflow.status}}\",
+                \"test_type\": \"network\",
+                \"parameters\": {
+                  \"target\": \"{{workflow.parameters.target-node}}\",
+                  \"server\": \"{{workflow.parameters.server}}\",
+                  \"bandwidth\": \"{{workflow.parameters.bandwidth}}\",
+                  \"proto\": \"{{workflow.parameters.proto}}\",
+                  \"direction\": \"{{workflow.parameters.direction}}\"
+                },
+                \"started\": \"{{workflow.creationTimestamp}}\",
+                \"duration\": \"{{workflow.duration}}\"
+              }" || echo "Callback failed (non-fatal)"
