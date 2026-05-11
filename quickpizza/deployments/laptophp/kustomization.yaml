@@ -1,0 +1,168 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: stress
+
+resources:
+  - ../base/quickpizza
+
+patches:
+  # ---------------------------------------------------------
+  # Global Deployment settings
+  # ---------------------------------------------------------
+  - target:
+      kind: Deployment
+    patch: |-
+      - op: add
+        path: /spec/template/spec/nodeSelector
+        value:
+          role: stress
+
+  - target:
+      kind: Deployment
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+
+  # ---------------------------------------------------------
+  # Hot path services
+  # These are the services that receive most traffic directly
+  # or indirectly during the k6 tests.
+  # ---------------------------------------------------------
+  - target:
+      kind: Deployment
+      name: quickpizza-public-api
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: "250m"
+            memory: "512Mi"
+          limits:
+            cpu: "1"
+            memory: "2Gi"
+
+  - target:
+      kind: Deployment
+      name: quickpizza-catalog
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: "250m"
+            memory: "512Mi"
+          limits:
+            cpu: "1"
+            memory: "2Gi"
+
+  - target:
+      kind: Deployment
+      name: quickpizza-copy
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: "250m"
+            memory: "512Mi"
+          limits:
+            cpu: "1"
+            memory: "2Gi"
+
+  # ---------------------------------------------------------
+  # Minimal services
+  # These services are kept lighter because they are less
+  # resource-intensive in your current setup.
+  # ---------------------------------------------------------
+  - target:
+      kind: Deployment
+      name: quickpizza-grpc
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: "250m"
+            memory: "256Mi"
+          limits:
+            cpu: "1"
+            memory: "512Mi"
+
+  - target:
+      kind: Deployment
+      name: quickpizza-config
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: "250m"
+            memory: "256Mi"
+          limits:
+            cpu: "1"
+            memory: "512Mi"
+
+  - target:
+      kind: Deployment
+      name: quickpizza-recommendations
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: "250m"
+            memory: "256Mi"
+          limits:
+            cpu: "1"
+            memory: "512Mi"
+
+  - target:
+      kind: Deployment
+      name: quickpizza-ws
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: "250m"
+            memory: "256Mi"
+          limits:
+            cpu: "1"
+            memory: "512Mi"
+
+  # ---------------------------------------------------------
+  # PostgreSQL database
+  # Uses emptyDir to avoid PVC/storage issues in the lab.
+  # Also forces scheduling on the stress worker.
+  # ---------------------------------------------------------
+  - target:
+      kind: StatefulSet
+      name: quickpizza-db
+    patch: |-
+      - op: add
+        path: /spec/template/spec/nodeSelector
+        value:
+          role: stress
+
+      - op: replace
+        path: /spec/volumeClaimTemplates
+        value: []
+
+      - op: add
+        path: /spec/template/spec/volumes
+        value:
+          - name: data
+            emptyDir: {}
+
+      - op: add
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: "250m"
+            memory: "512Mi"
+          limits:
+            cpu: "1"
+            memory: "2Gi"
