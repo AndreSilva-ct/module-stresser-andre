@@ -16,7 +16,7 @@ patches:
       - op: add
         path: /spec/template/spec/nodeSelector
         value:
-          role: stress
+          kubernetes.io/hostname: __TARGET_NODE__
 
   - target:
       kind: Deployment
@@ -145,7 +145,7 @@ patches:
       - op: add
         path: /spec/template/spec/nodeSelector
         value:
-          role: stress
+          kubernetes.io/hostname: __TARGET_NODE__
 
       - op: replace
         path: /spec/volumeClaimTemplates
